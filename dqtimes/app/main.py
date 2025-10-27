@@ -7,8 +7,11 @@ import tempfile
 from dask.distributed import Client, LocalCluster
 from app import forecast_temp
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Query
+from app.tasks import task_dummy, projection_task, task_long_running
+from app.celery_app import celery_app
 import math
 import time
+from typing import Dict, Any
 
 # Iniciar um cluster local e um cliente Dask
 cluster = LocalCluster()
@@ -99,3 +102,128 @@ async def upload_file(
         "current_page": page,
         "projecoes": resultado
     }
+
+
+# ========== ENDPOINTS CELERY ==========
+
+@app.post("/task/dummy")
+async def create_dummy_task(data: Dict[str, Any] = None):
+    """
+    Endpoint para executar a task dummy assíncronamente.
+    Implementa o round-trip: request API → enfileira → executa → retorna ID.
+    """
+    if data is None:
+        data = {"test": "dummy data"}
+    
+    # Enfileira a task
+    task = task_dummy.delay(data)
+    
+    return {
+        "task_id": task.id,
+        "status": "pending",
+        "message": "Task dummy enfileirada com sucesso"
+    }
+
+
+@app.post("/task/projection")
+async def create_projection_task_async(
+    lista_historico: str = Form(...),
+    quantidade_projecoes: int = Form(...),
+):
+    """
+    Endpoint assíncrono para realizar projeções de dados.
+    Retorna o ID da task para acompanhamento posterior.
+    """
+    lista_original = json.loads(lista_historico)
+    
+    # Enfileira a task assíncrona
+    task = projection_task.delay(lista_original, quantidade_projecoes)
+    
+    return {
+        "task_id": task.id,
+        "status": "pending",
+        "message": "Task de projeção enfileirada com sucesso",
+        "quantidade_projecoes": quantidade_projecoes
+    }
+
+
+@app.post("/task/long-running")
+async def create_long_running_task(iterations: int = Form(10)):
+    """
+    Endpoint para testar operações longas de forma assíncrona.
+    """
+    task = task_long_running.delay(iterations)
+    
+    return {
+        "task_id": task.id,
+        "status": "pending",
+        "iterations": iterations,
+        "message": "Task long-running enfileirada com sucesso"
+    }
+
+
+@app.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """
+    Retorna o status da task (pending, in execution, completed, failed).
+    Permite acompanhar o progresso da execução.
+    """
+    task = celery_app.AsyncResult(task_id)
+    
+    if task.state == "PENDING":
+        response = {
+            "task_id": task_id,
+            "status": "pending",
+            "message": "Task está aguardando execução"
+        }
+    elif task.state == "PROGRESS":
+        response = {
+            "task_id": task_id,
+            "status": "in execution",
+            "progress": task.info,
+            "message": "Task está sendo executada"
+        }
+    elif task.state == "SUCCESS":
+        response = {
+            "task_id": task_id,
+            "status": "completed",
+            "result": task.result,
+            "message": "Task concluída com sucesso"
+        }
+    elif task.state == "FAILURE":
+        response = {
+            "task_id": task_id,
+            "status": "failed",
+            "error": str(task.info),
+            "message": "Task falhou na execução"
+        }
+    else:
+        response = {
+            "task_id": task_id,
+            "status": task.state,
+            "message": "Status desconhecido"
+        }
+    
+    return response
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Verifica a saúde da API e do Celery.
+    """
+    try:
+        # Verifica se o Celery está respondendo
+        celery_stats = celery_app.control.inspect().stats()
+        
+        return {
+            "api": "healthy",
+            "celery": "connected" if celery_stats else "disconnected",
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        return {
+            "api": "healthy",
+            "celery": f"error: {str(e)}",
+            "timestamp": time.time()
+        }
