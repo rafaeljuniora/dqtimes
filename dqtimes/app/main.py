@@ -17,7 +17,8 @@ from dask.distributed import Client, LocalCluster
 from celery import Celery
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator, conint
+from pydantic import BaseModel, Field, validator, conint, field_validator, Gt, Ge
+from typing import Annotated
 
 def tax_acrescimo(lista: list) -> tuple:
     """Placeholder: Retorna taxas de crescimento/decréscimo dummy."""
@@ -141,21 +142,6 @@ def previsao1(lista,ano1):
             prev1, prev2 = naive_bayes(nova_lista, 2)
     return [round(prev1,3), round(prev2,3)]
 
-    a3 = 3
-    i3 = 1
-    lista3 = cp(lista)
-    while len(lista3) < 3:
-        lista3 = lista3+lista3
-    previsoes_media_movel3 = []
-    final = lista3[(len(lista3)-a3):]
-    while i3 <= n_de_prevs:
-        x = (final[0]+final[1]+final[2])/a3
-        previsoes_media_movel3.append(x)
-        lista3.append(x)
-        final = lista3[(len(lista3)-a3):]
-        i3 +=1
-    return(previsoes_media_movel3)
-
 def media_movel4(lista, n_de_prevs):
     i = 1
     a = 4
@@ -206,6 +192,7 @@ logger = logging.getLogger(__name__)
 try:
     cluster = LocalCluster()
     client = Client(cluster)
+    logger.info(f"Dask Dashboard disponível em: {client.dashboard_link}")
 except Exception as e:
     logger.error(f"Falha ao iniciar o cluster Dask: {e}")
     client = None
@@ -215,25 +202,16 @@ celery_app = Celery(
     broker='redis://localhost:6379/0',
     backend='redis://localhost:6379/0'
 )
-from app import forecast_temp
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Query
-from app.tasks import task_dummy, projection_task, task_long_running
-from app.celery_app import celery_app
-import math
-import time
-from typing import Dict, Any
-
-# Iniciar um cluster local e um cliente Dask
-cluster = LocalCluster()
-client = Client(cluster)
 
 app = FastAPI(title="API de Projeção de Séries Temporais", version="1.0.0")
 
 class ProjecaoListaRequest(BaseModel):
     lista_historico: str = Field(..., description="Lista histórica em formato de string JSON. Ex: '[10, 11, 12]'")
-    quantidade_projecoes: conint(gt=0) = Field(..., description="Número de projeções futuras a serem geradas.")
-    @validator('lista_historico')
-    def validate_lista_historico(cls, v):
+    
+    quantidade_projecoes: Annotated[int, Gt(0)] = Field(..., description="Número de projeções futuras a serem geradas.")
+    
+    @field_validator('lista_historico')
+    def validate_lista_historico(cls, v: str) -> str:
         try:
             lista = json.loads(v)
             if not isinstance(lista, list): raise ValueError("O conteúdo do JSON deve ser uma lista.")
@@ -244,11 +222,13 @@ class ProjecaoListaRequest(BaseModel):
         except ValueError as e: raise ValueError(str(e))
 
 class ProjecaoDataframeRequest(BaseModel):
-    quantidade_projecoes: conint(gt=0) = Field(..., description="Número de projeções futuras a serem geradas.")
+    quantidade_projecoes: Annotated[int, Gt(0)] = Field(..., description="Número de projeções futuras a serem geradas.")
+    
     header: bool = Field(..., description="Indica se o arquivo CSV possui uma linha de cabeçalho.")
     index_col: bool = Field(..., description="Indica se a primeira coluna do CSV é um índice a ser ignorado.")
-    page: conint(ge=1) = Field(1, description="Número da página para paginação de resultados.")
-    page_size: conint(ge=1) = Field(10, description="Quantidade de linhas por página.")
+    
+    page: Annotated[int, Ge(1)] = Field(1, description="Número da página para paginação de resultados.")
+    page_size: Annotated[int, Ge(1)] = Field(10, description="Quantidade de linhas por página.")
 
 class ProjecaoResponse(BaseModel):
     projecoes: List[Any]
@@ -272,7 +252,9 @@ def process_forecast_lista(self, lista_historico: str, quantidade_projecoes: int
     try:
         self.update_state(state='PROGRESS', meta={'status': 'Iniciando processamento...'})
         lista_original = json.loads(lista_historico)
+        
         resultado = forecast_temp(lista_original, quantidade_projecoes)
+        
         return {"projecoes": resultado, "status": "completed"}
     except Exception as e:
         self.update_state(state='FAILURE', meta={'exc': str(e)})
@@ -283,20 +265,33 @@ def process_forecast_lista(self, lista_historico: str, quantidade_projecoes: int
 def process_forecast_dataframe(self, file_path: str, quantidade_projecoes: int, header: bool, index_col: bool, page: int, page_size: int):
     try:
         self.update_state(state='PROGRESS', meta={'status': 'Lendo arquivo CSV...'})
+        
         ddf = dd.read_csv(file_path, header=0 if header else None, assume_missing=True)
-        if index_col: ddf = ddf.drop(ddf.columns[0], axis=1)
+        
+        if index_col: 
+            ddf = ddf.drop(ddf.columns[0], axis=1)
+            
         total_rows = len(ddf)
         total_pages = math.ceil(total_rows / page_size)
-        if page > total_pages and total_pages > 0: raise ValueError("Número da página fora do intervalo.")
+        
+        if page > total_pages and total_pages > 0: 
+            raise ValueError("Número da página fora do intervalo.")
+            
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
+        
         ddf_paginated = ddf.loc[start_index:end_index - 1]
+        
         self.update_state(state='PROGRESS', meta={'status': 'Calculando projeções...'})
         start_time = time.time()
+        
         def apply_forecast(df):
             return df.apply(lambda row: forecast_temp(row.dropna().tolist(), quantidade_projecoes), axis=1)
+        
         resultado = ddf_paginated.map_partitions(apply_forecast, meta=('object')).compute().tolist()
+        
         execution_time = time.time() - start_time
+        
         return {
             "projecoes": resultado, "execution_time": execution_time,
             "total_pages": total_pages, "current_page": page, "status": "completed"
@@ -306,20 +301,30 @@ def process_forecast_dataframe(self, file_path: str, quantidade_projecoes: int, 
         logger.error(f"Task {self.request.id} falhou: {e}")
         raise e
     finally:
-        if os.path.exists(file_path): os.unlink(file_path)
+        if os.path.exists(file_path): 
+            os.unlink(file_path)
 
 @app.on_event("startup")
 async def startup_event():
-    if client: print(f"Dask Dashboard disponível em: {client.dashboard_link}")
-    else: print("Dask não foi iniciado. Processamento de DataFrames pode ser lento.")
     print("FastAPI iniciado com sucesso.")
+    if not client:
+        print("AVISO: Dask não foi iniciado. Processamento de DataFrames pode ser lento.")
 
-@app.post("/projecao_lista/", tags=["Projeções"])
+@app.post("/projecao_lista/", response_model=ProjecaoResponse, tags=["Projeções"],
+          responses={
+              status.HTTP_202_ACCEPTED: {"model": TaskSubmissionResponse},
+              status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Erro de validação"},
+          })
 async def projecao_por_lista(
     lista_historico: str = Form(...),
     quantidade_projecoes: int = Form(...),
     async_processing: bool = Form(False, description="Se True, a tarefa será processada em background.")
 ):
+    """
+    Recebe uma lista de dados históricos e retorna projeções.
+    - Se `async_processing=False` (padrão): Processa imediatamente e retorna o resultado.
+    - Se `async_processing=True`: Enfileira a tarefa no Celery e retorna um ID de tarefa (HTTP 202).
+    """
     try:
         request_data = ProjecaoListaRequest(lista_historico=lista_historico, quantidade_projecoes=quantidade_projecoes)
     except ValueError as e:
@@ -327,7 +332,10 @@ async def projecao_por_lista(
     
     if async_processing:
         task = process_forecast_lista.delay(request_data.lista_historico, request_data.quantidade_projecoes)
-        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=TaskSubmissionResponse(task_id=task.id, status="processing", message="Tarefa de projeção de lista foi enfileirada.").dict())
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED, 
+            content=TaskSubmissionResponse(task_id=task.id, status="processing", message="Tarefa de projeção de lista foi enfileirada.").dict()
+        )
     else:
         start_time = time.time()
         resultado = forecast_temp(json.loads(request_data.lista_historico), request_data.quantidade_projecoes)
@@ -335,7 +343,12 @@ async def projecao_por_lista(
         return ProjecaoResponse(projecoes=resultado, execution_time=execution_time)
 
 
-@app.post("/projecao_dataframe/", tags=["Projeções"])
+@app.post("/projecao_dataframe/", response_model=ProjecaoResponse, tags=["Projeções"],
+          responses={
+              status.HTTP_202_ACCEPTED: {"model": TaskSubmissionResponse},
+              status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Erro de validação"},
+              status.HTTP_400_BAD_REQUEST: {"description": "Erro no processamento do arquivo"}
+          })
 async def projecao_por_dataframe(
     csv_dataframe: UploadFile = File(...),
     quantidade_projecoes: int = Form(...),
@@ -345,209 +358,83 @@ async def projecao_por_dataframe(
     page_size: int = Query(10, ge=1),
     async_processing: bool = Form(False, description="Se True, a tarefa será processada em background.")
 ):
+    """
+    Recebe um arquivo CSV, processa linha por linha e retorna projeções.
+    - Se `async_processing=False` (padrão): Processa imediatamente e retorna o resultado.
+    - Se `async_processing=True`: Enfileira a tarefa no Celery e retorna um ID de tarefa (HTTP 202).
+    """
     try:
-        request_data = ProjecaoDataframeRequest(quantidade_projecoes=quantidade_projecoes, header=header, index_col=index_col, page=page, page_size=page_size)
+        request_data = ProjecaoDataframeRequest(
+            quantidade_projecoes=quantidade_projecoes, header=header, 
+            index_col=index_col, page=page, page_size=page_size
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode="wb") as tmp_file:
         content = await csv_dataframe.read()
         tmp_file.write(content)
         tmp_file_path = tmp_file.name
+        
     if async_processing:
-        task = process_forecast_dataframe.delay(tmp_file_path, request_data.quantidade_projecoes, request_data.header, request_data.index_col, request_data.page, request_data.page_size)
-        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=TaskSubmissionResponse(task_id=task.id, status="processing", message="Tarefa de projeção de dataframe foi enfileirada.").dict())
+        task = process_forecast_dataframe.delay(
+            tmp_file_path, request_data.quantidade_projecoes, request_data.header, 
+            request_data.index_col, request_data.page, request_data.page_size
+        )
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED, 
+            content=TaskSubmissionResponse(task_id=task.id, status="processing", message="Tarefa de projeção de dataframe foi enfileirada.").dict()
+        )
     else:
         try:
-            result_dict = process_forecast_dataframe.__wrapped__(process_forecast_dataframe, file_path=tmp_file_path, quantidade_projecoes=request_data.quantidade_projecoes, header=request_data.header, index_col=request_data.index_col, page=request_data.page, page_size=request_data.page_size)
+            result_dict = process_forecast_dataframe.__wrapped__(
+                process_forecast_dataframe,
+                file_path=tmp_file_path, 
+                quantidade_projecoes=request_data.quantidade_projecoes, 
+                header=request_data.header, index_col=request_data.index_col, 
+                page=request_data.page, page_size=request_data.page_size
+            )
             return ProjecaoResponse(**result_dict)
         except Exception as e:
-            if os.path.exists(tmp_file_path): os.unlink(tmp_file_path)
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            if os.path.exists(tmp_file_path): 
+                os.unlink(tmp_file_path)
+            logger.error(f"Erro no processamento síncrono do dataframe: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao processar o arquivo: {e}")
 
 
 @app.get("/tasks/{task_id}", response_model=TaskStatusResponse, tags=["Gerenciamento de Tarefas"])
 async def get_task_status(task_id: str):
+    """Verifica o status de uma tarefa assíncrona enfileirada."""
     task_result = celery_app.AsyncResult(task_id)
-    response_data = {"task_id": task_id, "status": task_result.state, "result": task_result.result if task_result.state == 'SUCCESS' else str(task_result.info)}
-    if task_result.state == 'PENDING': response_data["result"] = "Tarefa na fila, aguardando para ser executada."
-    elif task_result.state == 'PROGRESS': response_data["result"] = task_result.info
+    
+    response_data = {
+        "task_id": task_id, 
+        "status": task_result.state, 
+        "result": None
+    }
+    
+    if task_result.state == 'SUCCESS':
+        response_data["result"] = task_result.result
+    elif task_result.state == 'FAILURE':
+        response_data["result"] = str(task_result.info)
+    elif task_result.state == 'PROGRESS':
+        response_data["result"] = task_result.info
+    elif task_result.state == 'PENDING':
+        response_data["result"] = "Tarefa na fila, aguardando para ser executada."
+        
     return TaskStatusResponse(**response_data)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
-    return JSONResponse(status_code=exc.status_code, content={"error_type": "ClientError", "message": exc.detail, "status_code": exc.status_code})
+    return JSONResponse(
+        status_code=exc.status_code, 
+        content={"error_type": "ClientError", "message": exc.detail, "status_code": exc.status_code}
+    )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.error(f"Erro interno não tratado: {exc}", exc_info=True)
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"error_type": "InternalServerError", "message": "Ocorreu um erro inesperado no servidor.", "status_code": 500})
-
-    ddf = dd.read_csv(tmp_file_path, header=0 if header else None)
-
-    if index_col:
-        ddf = ddf.drop(ddf.columns[0], axis=1)
-
-    # Calcular o número total de linhas e o número total de páginas
-    total_rows = len(ddf)
-    total_pages = math.ceil(total_rows / page_size)
-
-    # Verificar se o número da página é válido
-    if page > total_pages:
-        raise HTTPException(status_code=404, detail="Page number out of range")
-
-    # Calcular o índice inicial e final para a paginação
-    start_index = (page - 1) * page_size
-    end_index = start_index + page_size
-
-    # Aplicar a paginação ao DataFrame
-    ddf_paginated = ddf.loc[start_index:end_index]
-
-    start_time = time.time()
-    lista_df = []
-
-    for part in ddf_paginated.to_delayed():
-        # Converter a partição para um pandas DataFrame e iterar sobre as linhas
-        for index, row in part.compute().iterrows():
-            lista_df.append(row.tolist())
-
-    # Aplica a função de projeção à lista de listas
-    
-    resultado = []
-    for lista in lista_df:
-        projection = forecast_temp(lista, n)
-        resultado.append(projection)
-
-    end_time = time.time()
-    execution_time = end_time - start_time 
-
-    return {
-        "execution_time": execution_time,
-        "total_pages": total_pages,
-        "current_page": page,
-        "projecoes": resultado
-    }
-
-
-# ========== ENDPOINTS CELERY ==========
-
-@app.post("/task/dummy")
-async def create_dummy_task(data: Dict[str, Any] = None):
-    """
-    Endpoint para executar a task dummy assíncronamente.
-    Implementa o round-trip: request API → enfileira → executa → retorna ID.
-    """
-    if data is None:
-        data = {"test": "dummy data"}
-    
-    # Enfileira a task
-    task = task_dummy.delay(data)
-    
-    return {
-        "task_id": task.id,
-        "status": "pending",
-        "message": "Task dummy enfileirada com sucesso"
-    }
-
-
-@app.post("/task/projection")
-async def create_projection_task_async(
-    lista_historico: str = Form(...),
-    quantidade_projecoes: int = Form(...),
-):
-    """
-    Endpoint assíncrono para realizar projeções de dados.
-    Retorna o ID da task para acompanhamento posterior.
-    """
-    lista_original = json.loads(lista_historico)
-    
-    # Enfileira a task assíncrona
-    task = projection_task.delay(lista_original, quantidade_projecoes)
-    
-    return {
-        "task_id": task.id,
-        "status": "pending",
-        "message": "Task de projeção enfileirada com sucesso",
-        "quantidade_projecoes": quantidade_projecoes
-    }
-
-
-@app.post("/task/long-running")
-async def create_long_running_task(iterations: int = Form(10)):
-    """
-    Endpoint para testar operações longas de forma assíncrona.
-    """
-    task = task_long_running.delay(iterations)
-    
-    return {
-        "task_id": task.id,
-        "status": "pending",
-        "iterations": iterations,
-        "message": "Task long-running enfileirada com sucesso"
-    }
-
-
-@app.get("/task/{task_id}")
-async def get_task_status(task_id: str):
-    """
-    Retorna o status da task (pending, in execution, completed, failed).
-    Permite acompanhar o progresso da execução.
-    """
-    task = celery_app.AsyncResult(task_id)
-    
-    if task.state == "PENDING":
-        response = {
-            "task_id": task_id,
-            "status": "pending",
-            "message": "Task está aguardando execução"
-        }
-    elif task.state == "PROGRESS":
-        response = {
-            "task_id": task_id,
-            "status": "in execution",
-            "progress": task.info,
-            "message": "Task está sendo executada"
-        }
-    elif task.state == "SUCCESS":
-        response = {
-            "task_id": task_id,
-            "status": "completed",
-            "result": task.result,
-            "message": "Task concluída com sucesso"
-        }
-    elif task.state == "FAILURE":
-        response = {
-            "task_id": task_id,
-            "status": "failed",
-            "error": str(task.info),
-            "message": "Task falhou na execução"
-        }
-    else:
-        response = {
-            "task_id": task_id,
-            "status": task.state,
-            "message": "Status desconhecido"
-        }
-    
-    return response
-
-
-@app.get("/health")
-async def health_check():
-    """
-    Verifica a saúde da API e do Celery.
-    """
-    try:
-        # Verifica se o Celery está respondendo
-        celery_stats = celery_app.control.inspect().stats()
-        
-        return {
-            "api": "healthy",
-            "celery": "connected" if celery_stats else "disconnected",
-            "timestamp": time.time()
-        }
-    except Exception as e:
-        return {
-            "api": "healthy",
-            "celery": f"error: {str(e)}",
-            "timestamp": time.time()
-        }
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+        content={"error_type": "InternalServerError", "message": "Ocorreu um erro inesperado no servidor.", "status_code": 500}
+    )
