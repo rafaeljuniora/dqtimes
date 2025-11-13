@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: .
+    container_name: backend
+    env_file: .env
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  celery:
+    build: .
+    container_name: celery
+    command: celery -A app.celery.app worker --loglevel=info
+    env_file: .env
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:
