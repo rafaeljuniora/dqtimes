@@ -27,7 +27,7 @@ def tax_acrescimo(lista: list) -> tuple:
 
 def binariza(lista: list, arg1: int, arg2: int) -> list:
     """Placeholder: Retorna uma lista binarizada dummy."""
-    print("AVISO: Usando a função placeholder 'binariza'.")
+    print("AVISO: Usando a função placeholder realiza para a 'binarização'.")
     return [1 if x > np.mean(lista) else 0 for x in lista]
 
 def inferencia_bayes_bin_general(lista: list, n_binarizacao: int) -> tuple:
@@ -46,24 +46,28 @@ def media_suave12(lista: list, n_de_prevs: int) -> list:
     return media_movel12(lista, n_de_prevs)
 
 def naive_bayes(lista, n_de_prevs):
-    lista1 = cp(lista)
-    prevs = []
-    contador = 1
+    lista_atual = cp(lista)
+    previsoes = []
     taxa = tax_acrescimo(lista)
-    while contador <= n_de_prevs:
-        n_binarizacao = min(max(len(lista1) - 1, 2), 6)
-        a = binariza(lista1, n_binarizacao - 1, n_binarizacao - 1)
-        b = inferencia_bayes_bin_general(a, n_binarizacao)
-        alta = b[0]
-        ultimo = lista1[-1]
-        if alta > 0.5:
-            prev = ultimo + (ultimo * taxa[0])
+    
+    for _ in range(n_de_prevs):
+        n_bin = min(max(len(lista_atual) - 1, 2), 6)
+
+        dados_binarizados = binariza(lista_atual, n_bin - 1, n_bin - 1)
+        resultado_bayes = inferencia_bayes_bin_general(dados_binarizados, n_bin)
+        
+        prob_alta = resultado_bayes[0]
+        ultimo_valor = lista_atual[-1]
+
+        if prob_alta > 0.5:
+            proxima_prev = ultimo_valor + (ultimo_valor * taxa[0])
         else:
-            prev = ultimo + (ultimo * taxa[1])
-        prevs.append(prev)
-        lista1.append(prev)
-        contador += 1
-    return prevs
+            proxima_prev = ultimo_valor + (ultimo_valor * taxa[1])
+
+        previsoes.append(proxima_prev)
+        lista_atual.append(proxima_prev)
+
+    return previsoes
 
 def alfa(lista_valores):
     return sum(lista_valores) / len(lista_valores) if lista_valores else 0
@@ -71,27 +75,39 @@ def alfa(lista_valores):
 def interpolador(lista_ano, lista_valores):
     data = datetime.today()
     ano_atual = data.year
-    if not lista_ano: return [], []
-    ano_completo = np.arange(lista_ano[0], ano_atual+1, 1)
-    a = alfa(lista_valores)
-    if a == 0: a = 1 
-    anos_faltantes = list(set(ano_completo)-set(lista_ano))
-    anos_faltantes.sort()
-    valores_inter = np.interp(anos_faltantes, lista_ano, lista_valores)
-    valores_inter = [(i/a)-((i*a)/100) for i in valores_inter]
-    if len(valores_inter) >= 2:
-        i = len(valores_inter)-1
-        x = valores_inter[i]
-        y = valores_inter[i-1]
-        if x == y:
-            valores_inter[-1] = (valores_inter[-1]/a)-((valores_inter[-1]*(2*a))/100)
 
-    matriz = [lista_ano + anos_faltantes, lista_valores + [*valores_inter]]
+    if not lista_ano:
+        return [], []
+
+    ano_inicial = lista_ano[0]
+    anos_completos = np.arange(ano_inicial, ano_atual + 1, 1)
+
+    a = alfa(lista_valores)
+    if a == 0:
+        a = 1
+
+    anos_faltantes = sorted(set(anos_completos) - set(lista_ano))
+
+    valores_interp = np.interp(anos_faltantes, lista_ano, lista_valores)
+
+    valores_interp = [(v / a) - ((v * a) / 100) for v in valores_interp]
+
+    if len(valores_interp) >= 2:
+        if valores_interp[-1] == valores_interp[-2]:
+            v = valores_interp[-1]
+            valores_interp[-1] = (v / a) - ((v * (2 * a)) / 100)
+
+    matriz = [
+        lista_ano + anos_faltantes,
+        lista_valores + [*valores_interp]
+    ]
     M = np.asarray(matriz)
+
     ordem = M[:, M[0].argsort()]
-    ano_total = [int(i) for i in ordem[0]]
-    valor_total = [round(j,4) for j in ordem[1]]
-    return ano_total, valor_total
+    anos_totais = [int(i) for i in ordem[0]]
+    valores_totais = [round(j, 4) for j in ordem[1]]
+
+    return anos_totais, valores_totais
 
 def previsao1(lista,ano1):
     ano = cp(ano1)
@@ -159,21 +175,22 @@ def media_movel4(lista, n_de_prevs):
     return(previsoes_media_movel4)
 
 def media_movel12(lista, n_de_prevs):
-    a = 12
-    i = 1
-    lista12 = cp(lista)
-    previsoes_media_movel12 = []
-    while len(lista12) < 12:
-        lista12 = lista12+lista12
-    final12 = lista12[(len(lista12)-a):]
-    while i <= n_de_prevs:
-        x = sum(final12[:])
-        w = (x)/a
-        previsoes_media_movel12.append(w)
-        lista12.append(w)
-        final12 = lista12[(len(lista12)-a):]
-        i +=1
-    return(previsoes_media_movel12)
+    janela = 12
+    lista_mm = cp(lista)
+    previsoes = []
+
+    while len(lista_mm) < janela:
+        lista_mm += lista_mm
+
+    ultimos = lista_mm[-janela:]
+
+    for _ in range(n_de_prevs):
+        media = sum(ultimos) / janela
+        previsoes.append(media)
+        lista_mm.append(media)
+        ultimos = lista_mm[-janela:]
+
+    return previsoes
 
 def forecast_temp(historical_data: list, num_projections: int) -> list:
     """
