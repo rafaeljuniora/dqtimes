@@ -24,5 +24,19 @@ services:
     depends_on:
       - redis
 
+  flower:
+    image: mher/flower:2.0.1
+    container_name: flower
+    env_file: .env
+    environment:
+      - CELERY_BROKER_URL=${REDIS_URL}
+      - FLOWER_PORT=${FLOWER_PORT}
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH}
+    ports:
+      - "${FLOWER_PORT}:${FLOWER_PORT}"
+    depends_on:
+      - redis
+      - celery
+
 volumes:
   redis_data:
