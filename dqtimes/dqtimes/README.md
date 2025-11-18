@@ -1,66 +1,66 @@
-# README #
+# dqtimes stack
 
-This README would normally document whatever steps are necessary to get your application up and running.
+Envio de séries temporais para previsão via FastAPI com suporte a Dask, Celery, Redis e monitoramento Flower.
 
-### What is this repository for? ###
+## Pré-requisitos
+- Docker + Docker Compose (v2)
+- Porta 8000 livre para o backend e 5555 livre para o Flower
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+## Serviços
+| Serviço  | Descrição                          | Porta host |
+|----------|------------------------------------|------------|
+| backend  | FastAPI + Dask (`uvicorn`)         | 8000       |
+| celery   | Worker Celery lendo do Redis       | -          |
+| redis    | Broker e backend das tarefas       | 6379       |
+| flower   | Painel web das tarefas Celery      | 5555       |
 
-### How do I get set up? ###
+## Executando
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+1. Configure as variáveis de ambiente no arquivo `.env` (já contém valores padrão):
+   ```env
+   REDIS_URL=redis://redis:6379/0
+   FLOWER_PORT=5555
+   FLOWER_BASIC_AUTH=admin:admin  # ⚠️ Altere em produção!
+   ```
 
-### Contribution guidelines ###
+2. Construa e suba todo o stack:
 
-* Writing tests
-* Code review
-* Other guidelines
+```powershell
+docker compose up --build
+```
 
-### Who do I talk to? ###
+3. Acesse os serviços:
+   - **Backend API**: `http://localhost:8000/docs`
+   - **Flower Dashboard**: `http://localhost:5555` (credenciais: `admin / admin`)
+   - Dashboard do Dask aparece no log de inicialização do backend
 
-* compilar c++ para usar no python: 
-c++ -O3 -Wall -shared -std=c++11 -fPIC $(python3 -m pybind11 --includes) seu_arquivo.cpp -o nome_do_modulo$(python3-config --extension-suffix)
-para importar no python apenas chamar: 'import nome_do_modulo'
+## Flower - Monitoramento Celery
 
-para compilar cuda e usar no python:
-nvcc -arch=sm_75 -o sumArrayGPU.so -shared -Xcompiler -fPIC sumArrayGPU.cu
-* nesse caso seguir este exemplo de uso no script:
+### ✅ Configuração implementada:
+- **Container Flower**: rodando no stack backend via `docker-compose.yml`
+- **Conexão Redis**: conectado ao broker configurado via `${REDIS_URL}` no `.env`
+- **Workers Celery**: monitorando worker `celery@<hostname>` em tempo real
+- **URL de acesso**: `http://localhost:${FLOWER_PORT}` (padrão: 5555)
+- **Credenciais**: definidas em `FLOWER_BASIC_AUTH` no `.env` (padrão: `admin:admin`)
+- **⚠️ Segurança**: Sempre altere `FLOWER_BASIC_AUTH` antes de deploy em produção e adicione `.env` ao `.gitignore`
 
-# Python function calling the compiled C++/CUDA function
+### Funcionalidades disponíveis no painel:
+- **Tasks**: visualizar tarefas registradas (incluindo `app.celery.test_task`)
+- **Workers**: status dos workers ativos, concorrência, uptime
+- **Monitor**: gráficos em tempo real de execução de tarefas
+- **Broker**: estatísticas do Redis
 
-import ctypes
-import pycuda.gpuarray as gpuarray
-import pycuda.driver as cuda
-from pycuda.compiler import SourceModule
-import pycuda.autoinit
+### Testar tarefas:
+Execute dentro do container backend para disparar uma tarefa de teste:
+```bash
+docker exec -it backend python -c "from app.celery import test_task; test_task.delay()"
+```
+A tarefa aparecerá imediatamente no dashboard Flower.
 
-import numpy as np
+## Troubleshooting
+- **Flower não sobe**: confirme se a porta 5555 está livre e se o container tem acesso ao Redis (`docker compose logs flower`).
+- **Tarefas não aparecem**: verifique se os workers Celery estão rodando (`docker compose logs celery`) e se o backend está publicando tarefas.
+- **Outras dependências nativas**: as bibliotecas `.so` já estão incluídas; execute sempre dentro do container Linux para evitar erros de carregamento no Windows.
 
-# Load the CUDA library
-cuda_lib = ctypes.CDLL('./sumArrayGPU.so')  # Update with the correct path
-
-# Define the function prototype
-cuda_lib.my_cuda_function.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.c_int]
-cuda_lib.my_cuda_function.restype = None
-
-# Prepare data
-input_data = np.array([3, 1, 33, -4]).astype(np.int32)
-output_data = np.array([0, 0, 0, 0]).astype(np.int32)
-size = len(input_data)
-
-# Use PyCUDA to allocate GPU memory
-input_gpu   = gpuarray.to_gpu(input_data)
-output_gpu  = gpuarray.to_gpu(output_data)
-
-# Call the CUDA function
-cuda_lib.my_cuda_function(ctypes.cast(input_gpu.ptr, ctypes.POINTER(ctypes.c_int)), ctypes.cast(output_gpu.ptr, ctypes.POINTER(ctypes.c_int)), size)
-
-print(input_gpu)
-print(output_gpu)
+## Desenvolvimento local (opcional)
+Se preferir rodar sem Docker, crie um virtualenv, instale `requirements.txt`, configure o Redis localmente e exporte as mesmas variáveis do `.env`. Lembre-se de que as bibliotecas `.so` requerem ambiente Linux/WSL.
