@@ -1,10 +1,11 @@
 from datetime import datetime
-from models import TaskHistory
+
+from dqtimes.endpoint_historico_dqtimes.models import TaskHistory
 
 
 def registrar_historico(
     db,
-    task_name: str,
+    task: str,
     referencia: str | None,
     status: str,
     details: dict | list | None = None
@@ -15,7 +16,7 @@ def registrar_historico(
     """
 
     historia = TaskHistory(
-        task_name=task_name,
+        task=task,
         referencia=referencia,
         status=status,
         details=details,

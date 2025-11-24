@@ -9,12 +9,13 @@ from sqlalchemy import JSON, Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 
 from pydantic import BaseModel, Field
+from dqtimes.endpoint_historico_dqtimes.database import Base
 
-# (Importações do SQLAlchemy e Base permanecem as mesmas)
 
-# --- Definição dos Schemas de Resposta da API (Pydantic) ---
 
-Base = declarative_base()
+
+
+
 
 class Link(BaseModel):
     """ Estrutura para os hiperlinks de navegação (HATEOAS). """
@@ -59,3 +60,17 @@ class TaskHistory(Base):
     created_at = Column(DateTime)
     finished_at = Column(DateTime, nullable=True)
     details = Column(JSON, nullable=True)
+
+    def to_dict(self, include_details=False):
+        data = {
+            "referencia": self.referencia,
+            "task": self.task,
+            "status": self.status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+        if include_details:
+            data["details"] = self.details
+        return data
+
+

@@ -12,9 +12,12 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-#talvez precisa de mais imports aqui
+print("Criando tabelas no banco (se não existirem)...")
+Base.metadata.create_all(bind=engine)
+print("Tabelas criadas!")
 
-# (Criação do banco de dados e FastAPI app permanecem as mesmas)
+
+
 
 def format_number_in_dict(data: Any, precision: int = 4) -> Any:
     """ Formata floats dentro de um dicionário para a precisão desejada. """
@@ -80,7 +83,7 @@ def get_history(
     status: Optional[str] = Query(None),
     task: Optional[str] = Query(None),
     referencia: Optional[str] = Query(None),
-    expand: Optional[str] = Query(None)
+    details: Optional[bool] = Query(True),
 ):
     """
     Retorna o histórico de execuções com filtros, paginação, datas padronizadas 
@@ -95,10 +98,10 @@ def get_history(
         query = query.filter(TaskHistory.status == status.upper())
     
     if task:
-        query = query.filter(TaskHistory.task_name == task.lower())
+        query = query.filter(TaskHistory.task == task.lower())
         
     if referencia:
-        query = query.filter(TaskHistory.id.like(f"%{referencia}%"))
+        query = query.filter(TaskHistory.referencia.like(f"%{referencia}%"))
 
     # 2. Contar e Calcular Paginação
     total_items = query.count()
@@ -112,7 +115,7 @@ def get_history(
     items = query.order_by(TaskHistory.created_at.desc()).offset(offset).limit(limit).all()
 
     # 4. Formatar Resposta, Detalhes e Datas
-    include_details = expand and expand.lower() == 'details'
+    include_details = details
     formatted_items: List[HistoryItemExpanded] = []
     
     for item in items:
