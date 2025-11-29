@@ -7,6 +7,9 @@ datetime
 uvicorn
 python-multipart
 bokeh
+celery
+redis
+requests
 sqlalchemy
 pydantic
 
