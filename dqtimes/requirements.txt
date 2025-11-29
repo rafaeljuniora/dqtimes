@@ -10,3 +10,9 @@ bokeh
 celery
 redis
 requests
+sqlalchemy
+pydantic
+
+
+pytest
+requests
