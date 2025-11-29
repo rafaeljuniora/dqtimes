@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Usaremos um banco de dados SQLite para simplicidade.
+# Usaremos um banco de dados SQLite para simplicidade
 # Substitua pelo URL do seu DB (ex: "postgresql://user:password@host/dbname")
 
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'history.db')}"
