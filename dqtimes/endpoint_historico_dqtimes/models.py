@@ -1,5 +1,3 @@
-# models.py (Atualizado)
-
 import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
