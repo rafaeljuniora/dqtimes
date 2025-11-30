@@ -7,3 +7,6 @@ datetime
 uvicorn
 python-multipart
 bokeh
+pyarrow
+celery==5.3.6
+redis==5.0.1
